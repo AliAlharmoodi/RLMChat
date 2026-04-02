@@ -102,6 +102,68 @@
 						},
 					]
 	);
+	const cleanTraceContent = (value: string) =>
+		value
+			.replace(/```repl\s*/gi, "")
+			.replace(/```/g, "")
+			.replace(/FINAL\(([\s\S]*?)\)/g, "$1")
+			.replace(/\n{3,}/g, "\n\n")
+			.trim();
+
+	const splitIntoIterationBlocks = (value: string) => {
+		const normalized = cleanTraceContent(value);
+		const lines = normalized.split("\n");
+		const starts: number[] = [];
+
+		for (let i = 0; i < lines.length; i += 1) {
+			if (/^Iteration \d+\s*$/.test(lines[i].trim())) {
+				starts.push(i);
+			}
+		}
+
+		if (!starts.length) {
+			return normalized
+				? [
+						{
+							title: "",
+							content: normalized,
+						},
+					]
+				: [];
+		}
+
+		return starts.map((start, index) => {
+			const end = starts[index + 1] ?? lines.length;
+			const blockLines = lines.slice(start, end);
+			const title = blockLines[0]?.trim() ?? "";
+			const content = blockLines.slice(1).join("\n").trim();
+			return { title, content };
+		});
+	};
+
+	let structuredDetails = $derived(
+		detailLines.flatMap((detail) => {
+			const blocks = splitIntoIterationBlocks(detail.content);
+			if (detail.label === "Root model outputs" && blocks.length > 1) {
+				return blocks.map((block) => ({
+					label: block.title || detail.label,
+					blocks: [
+						{
+							title: "",
+							content: block.content,
+						},
+					],
+				}));
+			}
+
+			return [
+				{
+					label: detail.label,
+					blocks,
+				},
+			];
+		})
+	);
 
 	$effect(() => {
 		if (!loading && !section) {
@@ -128,15 +190,24 @@
 		</button>
 
 		{#if isOpen}
-			<div class="space-y-4 pt-1">
-				{#each detailLines as detail, index (`${section?.sectionId ?? 'live'}-${index}`)}
+			<div class="space-y-5 pt-1">
+				{#each structuredDetails as detail, index (`${section?.sectionId ?? 'live'}-${index}`)}
 					<div class="space-y-2.5">
 						<div class="text-[11px] font-medium uppercase tracking-[0.16em] text-white/32">
 							{detail.label}
 						</div>
-						<pre
-							class="scrollbar-custom max-h-[70vh] overflow-auto rounded-[0.95rem] border border-white/[0.05] bg-black/[0.14] px-4 py-3 whitespace-pre-wrap break-words font-mono text-[0.74rem] leading-6 text-white/78"
-						>{detail.content}</pre>
+						<div class="space-y-4">
+							{#each detail.blocks as block, blockIndex (`${detail.label}-${blockIndex}`)}
+								<div class="border-l border-white/[0.08] pl-4">
+									{#if block.title}
+										<div class="mb-2 text-sm font-medium text-white/72">{block.title}</div>
+									{/if}
+									<pre
+										class="overflow-visible whitespace-pre-wrap break-words bg-transparent p-0 font-mono text-[0.76rem] leading-7 text-white/78"
+									>{block.content}</pre>
+								</div>
+							{/each}
+						</div>
 					</div>
 				{/each}
 			</div>

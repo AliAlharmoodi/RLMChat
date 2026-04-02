@@ -85,6 +85,14 @@ const truncate = (value: unknown, max = 8000) => {
 	return text.length > max ? `${text.slice(0, max)}\n\n...[truncated]` : text;
 };
 
+const cleanTraceText = (value: unknown, max = 12000) =>
+	truncate(value, max)
+		.replace(/```repl\s*/gi, "")
+		.replace(/```/g, "")
+		.replace(/FINAL\(([\s\S]*?)\)/g, "$1")
+		.replace(/FINAL_VAR\(([\s\S]*?)\)/g, "$1")
+		.trim();
+
 const buildTraceSections = ({
 	finalText,
 	metadata,
@@ -95,18 +103,41 @@ const buildTraceSections = ({
 	executionTime?: number;
 }): RlmTraceEvent[] => {
 	const iterations = Array.isArray(metadata?.iterations) ? metadata?.iterations : [];
-	const rootOutputs: string[] = [];
+	const details: Array<{ label: string; content: string; kind?: "text" | "code" | "output" | "error" }> =
+		[];
 	const workerOutputs: string[] = [];
 	const workerActivity: string[] = [];
 	let workerCallCount = 0;
 
 	for (const [index, iteration] of iterations.entries()) {
+		const lines: string[] = [];
+
 		if (typeof iteration?.response === "string" && iteration.response.trim()) {
-			rootOutputs.push(`Iteration ${index + 1}\n${truncate(iteration.response, 12000)}`);
+			lines.push(cleanTraceText(iteration.response));
 		}
 
 		const codeBlocks = Array.isArray(iteration?.code_blocks) ? iteration.code_blocks : [];
-		for (const block of codeBlocks) {
+		for (const [blockIndex, block] of codeBlocks.entries()) {
+			const code = typeof block?.code === "string" ? cleanTraceText(block.code) : "";
+			const stdout =
+				typeof block?.result?.stdout === "string" && block.result.stdout.trim()
+					? cleanTraceText(block.result.stdout)
+					: "";
+			const stderr =
+				typeof block?.result?.stderr === "string" && block.result.stderr.trim()
+					? cleanTraceText(block.result.stderr)
+					: "";
+
+			if (code) {
+				lines.push(`Code block ${blockIndex + 1}\n${code}`);
+			}
+			if (stdout) {
+				lines.push(`Stdout\n${stdout}`);
+			}
+			if (stderr) {
+				lines.push(`Stderr\n${stderr}`);
+			}
+
 			const rlmCalls = Array.isArray(block?.result?.rlm_calls) ? block.result.rlm_calls : [];
 			for (const [callIndex, call] of rlmCalls.entries()) {
 				workerCallCount += 1;
@@ -117,9 +148,21 @@ const buildTraceSections = ({
 					}`
 				);
 				if (typeof call?.response === "string" && call.response.trim()) {
-					workerOutputs.push(`${label}\n${truncate(call.response, 12000)}`);
+					workerOutputs.push(`${label}\n${cleanTraceText(call.response)}`);
 				}
 			}
+		}
+
+		if (typeof iteration?.final_answer === "string" && iteration.final_answer.trim()) {
+			lines.push(`Final answer\n${cleanTraceText(iteration.final_answer)}`);
+		}
+
+		if (lines.length) {
+			details.push({
+				label: `Iteration ${index + 1}`,
+				content: lines.join("\n\n"),
+				kind: "text" as const,
+			});
 		}
 	}
 
@@ -140,15 +183,7 @@ const buildTraceSections = ({
 							: "No worker calls were made during this reply.",
 					kind: "text" as const,
 				},
-				...(rootOutputs.length
-					? [
-							{
-								label: "Root model outputs",
-								content: rootOutputs.join("\n\n"),
-								kind: "text" as const,
-							},
-						]
-					: []),
+				...details,
 				...(workerOutputs.length
 					? [
 							{
