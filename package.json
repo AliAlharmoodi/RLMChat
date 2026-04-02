@@ -1,0 +1,10 @@
+{
+  "name": "rlm-chat-root",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix chat-ui run dev --",
+    "build": "npm --prefix chat-ui run build",
+    "check": "npm --prefix chat-ui run check",
+    "test": "npm --prefix chat-ui run test"
+  }
+}
