@@ -75,6 +75,7 @@ class RLM:
         on_subcall_complete: Callable[[int, str, float, str | None], None] | None = None,
         on_iteration_start: Callable[[int, int], None] | None = None,
         on_iteration_complete: Callable[[int, int, float], None] | None = None,
+        on_iteration_delta: Callable[[int, int, str], None] | None = None,
     ):
         """
         Args:
@@ -109,6 +110,8 @@ class RLM:
             on_subcall_complete: Callback fired when a child RLM completes. Args: (depth, model, duration, error_or_none).
             on_iteration_start: Callback fired when an iteration starts. Args: (depth, iteration_num).
             on_iteration_complete: Callback fired when an iteration completes. Args: (depth, iteration_num, duration).
+            on_iteration_delta: Callback fired when the root model streams text for an
+                iteration. Args: (depth, iteration_num, delta_text).
         """
         # Store config for spawning per-completion
         self.backend = backend
@@ -153,6 +156,7 @@ class RLM:
         self.on_subcall_complete = on_subcall_complete
         self.on_iteration_start = on_iteration_start
         self.on_iteration_complete = on_iteration_complete
+        self.on_iteration_delta = on_iteration_delta
 
         # Tracking (cumulative across all calls including children)
         self._cumulative_cost: float = 0.0
@@ -309,6 +313,7 @@ class RLM:
             compaction_count = 0
             try:
                 for i in range(self.max_iterations):
+                    iteration_num = i + 1
                     # Check timeout before each iteration
                     self._check_timeout(i, time_start)
 
@@ -342,11 +347,22 @@ class RLM:
                         build_user_prompt(root_prompt, i, context_count, history_count)
                     ]
 
+                    if self.on_iteration_start:
+                        self.on_iteration_start(self.depth, iteration_num)
+
                     iteration: RLMIteration = self._completion_turn(
                         prompt=current_prompt,
                         lm_handler=lm_handler,
                         environment=environment,
+                        iteration_num=iteration_num,
                     )
+
+                    if self.on_iteration_complete:
+                        self.on_iteration_complete(
+                            self.depth,
+                            iteration_num,
+                            iteration.iteration_time,
+                        )
 
                     # Check error/budget/token limits after each iteration
                     self._check_iteration_limits(iteration, i, lm_handler)
@@ -592,13 +608,21 @@ class RLM:
         prompt: str | dict[str, Any],
         lm_handler: LMHandler,
         environment: BaseEnv,
+        iteration_num: int,
     ) -> RLMIteration:
         """
         Perform a single iteration of the RLM, including prompting the model
         and code execution + tool execution.
         """
         iter_start = time.perf_counter()
-        response = lm_handler.completion(prompt)
+        response = lm_handler.completion(
+            prompt,
+            stream_callback=(
+                (lambda delta: self.on_iteration_delta(self.depth, iteration_num, delta))
+                if self.on_iteration_delta
+                else None
+            ),
+        )
         code_block_strs = find_code_blocks(response)
         code_blocks = []
 

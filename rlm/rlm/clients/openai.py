@@ -1,6 +1,6 @@
 import os
 from collections import defaultdict
-from typing import Any
+from typing import Any, Callable
 
 import openai
 from dotenv import load_dotenv
@@ -66,7 +66,12 @@ class OpenAIClient(BaseLM):
         self.model_total_tokens: dict[str, int] = defaultdict(int)
         self.model_costs: dict[str, float] = defaultdict(float)  # Cost in USD
 
-    def completion(self, prompt: str | list[dict[str, Any]], model: str | None = None) -> str:
+    def completion(
+        self,
+        prompt: str | list[dict[str, Any]],
+        model: str | None = None,
+        stream_callback: Callable[[str], None] | None = None,
+    ) -> str:
         if isinstance(prompt, str):
             messages = [{"role": "user", "content": prompt}]
         elif isinstance(prompt, list) and all(isinstance(item, dict) for item in prompt):
@@ -82,11 +87,39 @@ class OpenAIClient(BaseLM):
         if self.client.base_url == DEFAULT_PRIME_INTELLECT_BASE_URL:
             extra_body["usage"] = {"include": True}
 
-        response = self.client.chat.completions.create(
-            model=model, messages=messages, extra_body=extra_body
+        if stream_callback is None:
+            response = self.client.chat.completions.create(
+                model=model, messages=messages, extra_body=extra_body
+            )
+            self._track_cost(response, model)
+            return response.choices[0].message.content
+
+        stream = self.client.chat.completions.create(
+            model=model,
+            messages=messages,
+            extra_body=extra_body,
+            stream=True,
+            stream_options={"include_usage": True},
         )
-        self._track_cost(response, model)
-        return response.choices[0].message.content
+        chunks: list[str] = []
+        usage = None
+
+        for chunk in stream:
+            if getattr(chunk, "usage", None) is not None:
+                usage = chunk.usage
+
+            if not getattr(chunk, "choices", None):
+                continue
+
+            delta = chunk.choices[0].delta.content
+            if not delta:
+                continue
+
+            chunks.append(delta)
+            stream_callback(delta)
+
+        self._track_usage(usage, model)
+        return "".join(chunks)
 
     async def acompletion(
         self, prompt: str | list[dict[str, Any]], model: str | None = None
@@ -113,11 +146,20 @@ class OpenAIClient(BaseLM):
         return response.choices[0].message.content
 
     def _track_cost(self, response: openai.ChatCompletion, model: str):
-        self.model_call_counts[model] += 1
-
         usage = getattr(response, "usage", None)
         if usage is None:
             raise ValueError("No usage data received. Tracking tokens not possible.")
+
+        self._track_usage(usage, model)
+
+    def _track_usage(self, usage: Any, model: str):
+        self.model_call_counts[model] += 1
+
+        if usage is None:
+            self.last_prompt_tokens = 0
+            self.last_completion_tokens = 0
+            self.last_cost = None
+            return
 
         self.model_input_tokens[model] += usage.prompt_tokens
         self.model_output_tokens[model] += usage.completion_tokens
@@ -127,8 +169,6 @@ class OpenAIClient(BaseLM):
         self.last_prompt_tokens = usage.prompt_tokens
         self.last_completion_tokens = usage.completion_tokens
 
-        # Extract cost from OpenRouter responses (cost is in USD)
-        # OpenRouter returns cost in usage.model_extra for pydantic models
         self.last_cost: float | None = None
         cost = None
 

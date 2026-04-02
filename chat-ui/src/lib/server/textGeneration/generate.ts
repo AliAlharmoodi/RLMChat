@@ -14,6 +14,26 @@ import { logger } from "../logger";
 
 type GenerateContext = Omit<TextGenerationContext, "messages"> & { messages: EndpointMessage[] };
 
+const splitRlmTraceDelta = (delta: string, maxChunkSize = 32) => {
+	if (delta.length <= maxChunkSize) return [delta];
+
+	const tokens = delta.match(/\S+\s*|\s+/g) ?? [delta];
+	const chunks: string[] = [];
+	let current = "";
+
+	for (const token of tokens) {
+		if (current.length + token.length > maxChunkSize && current.length > 0) {
+			chunks.push(current);
+			current = token;
+			continue;
+		}
+		current += token;
+	}
+
+	if (current) chunks.push(current);
+	return chunks;
+};
+
 export async function* generate(
 	{
 		model,
@@ -73,6 +93,19 @@ export async function* generate(
 					subtype: MessageRlmTraceUpdateType.Status,
 					status: output.rlmTrace.status,
 				};
+				continue;
+			}
+
+			if (output.rlmTrace.kind === "stream") {
+				for (const chunk of splitRlmTraceDelta(output.rlmTrace.delta)) {
+					yield {
+						type: MessageUpdateType.RlmTrace,
+						subtype: MessageRlmTraceUpdateType.Stream,
+						phase: output.rlmTrace.phase,
+						iteration: output.rlmTrace.iteration,
+						delta: chunk,
+					};
+				}
 				continue;
 			}
 

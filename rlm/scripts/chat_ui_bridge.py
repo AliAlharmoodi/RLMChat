@@ -80,6 +80,26 @@ def _build_rlm(request: dict[str, Any], trace_enabled: bool = False) -> RLM:
     }
 
     if trace_enabled:
+        rlm_kwargs["on_iteration_start"] = lambda depth, iteration_num: _emit_trace(
+            {
+                "kind": "status",
+                "status": f"Working on iteration {iteration_num}",
+            }
+        )
+        rlm_kwargs["on_iteration_delta"] = lambda depth, iteration_num, delta: _emit_trace(
+            {
+                "kind": "stream",
+                "phase": "root",
+                "iteration": iteration_num,
+                "delta": delta,
+            }
+        )
+        rlm_kwargs["on_iteration_complete"] = lambda depth, iteration_num, duration: _emit_trace(
+            {
+                "kind": "status",
+                "status": f"Completed iteration {iteration_num}",
+            }
+        )
         rlm_kwargs["on_subcall_start"] = lambda depth, model, prompt_preview: _emit_trace(
             {
                 "kind": "status",

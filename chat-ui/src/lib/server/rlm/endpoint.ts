@@ -246,7 +246,6 @@ export function makeRlmEndpoint(model: RlmModel): Endpoint {
 				max_concurrent_subcalls: settings.maxConcurrentSubcalls,
 				abortSignal,
 				onTrace: (trace) => {
-					if (trace.kind !== "status") return;
 					push({
 						token: { id: 0, text: "", logprob: 0, special: true },
 						generated_text: null,

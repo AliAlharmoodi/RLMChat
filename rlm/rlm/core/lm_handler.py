@@ -8,6 +8,7 @@ import asyncio
 import time
 from socketserver import StreamRequestHandler, ThreadingTCPServer
 from threading import Thread
+from typing import Callable
 
 from rlm.clients.base_lm import BaseLM
 from rlm.core.comms_utils import LMRequest, LMResponse, socket_recv, socket_send
@@ -204,9 +205,21 @@ class LMHandler:
             self._server = None
             self._thread = None
 
-    def completion(self, prompt: str, model: str | None = None) -> str:
+    def completion(
+        self,
+        prompt: str,
+        model: str | None = None,
+        stream_callback: Callable[[str], None] | None = None,
+    ) -> str:
         """Direct completion call (for main process use)."""
-        return self.get_client(model).completion(prompt)
+        client = self.get_client(model)
+        if stream_callback is None:
+            return client.completion(prompt)
+
+        try:
+            return client.completion(prompt, stream_callback=stream_callback)
+        except TypeError:
+            return client.completion(prompt)
 
     def __enter__(self):
         self.start()

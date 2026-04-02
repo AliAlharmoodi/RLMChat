@@ -16,6 +16,12 @@ export type RlmTraceEvent =
 			status: string;
 	  }
 	| {
+			kind: "stream";
+			phase: "root" | "worker";
+			iteration: number;
+			delta: string;
+	  }
+	| {
 			kind: "section";
 			sectionId: string;
 			title: string;
@@ -25,6 +31,7 @@ export type RlmTraceEvent =
 			details: Array<{
 				label: string;
 				content: string;
+				rawContent?: string;
 				kind?: "text" | "code" | "output" | "error";
 			}>;
 	  };

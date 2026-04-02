@@ -257,6 +257,18 @@ function isPrefix(prefix: RlmSnapshotMessage[], full: RlmSnapshotMessage[]) {
 	return true;
 }
 
+export function shouldResetPersistentSession(args: {
+	previousPreprompt: string;
+	nextPreprompt: string;
+	previousMessages: RlmSnapshotMessage[];
+	nextMessages: RlmSnapshotMessage[];
+}) {
+	return (
+		args.previousPreprompt !== args.nextPreprompt ||
+		!isPrefix(args.previousMessages, args.nextMessages)
+	);
+}
+
 function enqueueSessionWork<T>(
 	conversationId: string,
 	session: SessionState,
@@ -268,9 +280,14 @@ function enqueueSessionWork<T>(
 		() => undefined
 	);
 
-	result.finally(() => {
-		scheduleSessionClose(conversationId);
-	});
+	void result.then(
+		() => {
+			scheduleSessionClose(conversationId);
+		},
+		() => {
+			scheduleSessionClose(conversationId);
+		}
+	);
 
 	return result;
 }
@@ -543,32 +560,47 @@ export async function runConversationScopedRlm(
 			context: request.structuredContext,
 		});
 	}
+	const conversationId = request.conversationId;
 
 	const payload: ConversationScopedRequest = {
 		...request,
 		api_key: apiKey,
 	};
 
-	let session = sessionMap.get(request.conversationId);
+	let session = sessionMap.get(conversationId);
 	if (!session || session.modelFingerprint !== request.modelFingerprint) {
-		if (session) await closeSession(request.conversationId);
-		session = await createSession(request.conversationId, payload);
+		if (session) await closeSession(conversationId);
+		session = await createSession(conversationId, payload);
 	}
 
-	return await enqueueSessionWork(request.conversationId, session, async () => {
+	return await enqueueSessionWork(conversationId, session, async () => {
 		const preprompt = request.preprompt?.trim() || "";
-		const resetRequired =
-			session.previousPreprompt !== preprompt || !isPrefix(session.previousMessages, request.messages);
+		const resetRequired = shouldResetPersistentSession({
+			previousPreprompt: session.previousPreprompt,
+			nextPreprompt: preprompt,
+			previousMessages: session.previousMessages,
+			nextMessages: request.messages,
+		});
+		let activeSession = session;
+
+		// Branch edits/retries must not reuse the old persistent REPL state, because
+		// LocalREPL appends new contexts as context_1/context_2/... while `context`
+		// continues to alias context_0. Recreate the session so the active branch is
+		// the only visible conversation context.
+		if (resetRequired) {
+			await closeSession(conversationId);
+			activeSession = await createSession(conversationId, payload);
+		}
 
 		let nextMessages = !resetRequired
-			? request.messages.slice(session.previousMessages.length)
+			? request.messages.slice(activeSession.previousMessages.length)
 			: request.messages;
 		const needsReseed = resetRequired || nextMessages.length === 0;
 		const context = needsReseed
 			? request.structuredContext
 			: buildStructuredIncrementalContext(request.modelDisplayName, nextMessages);
 		const response = await sendSessionCommand(
-			session,
+			activeSession,
 			{
 				command: "complete",
 				context,
@@ -578,9 +610,9 @@ export async function runConversationScopedRlm(
 			request.onTrace
 		);
 
-		session.previousMessages = request.messages;
-		session.previousPreprompt = preprompt;
-		await saveDurableMetadata(session);
+		activeSession.previousMessages = request.messages;
+		activeSession.previousPreprompt = preprompt;
+		await saveDurableMetadata(activeSession);
 
 		if (!isSuccessSessionResponse(response)) {
 			throw new Error("Unexpected non-success RLM session response");

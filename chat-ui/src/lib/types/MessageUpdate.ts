@@ -134,12 +134,14 @@ export interface MessageRouterMetadataUpdate {
 
 export enum MessageRlmTraceUpdateType {
 	Status = "status",
+	Stream = "stream",
 	Section = "section",
 }
 
 export interface MessageRlmTraceDetail {
 	label: string;
 	content: string;
+	rawContent?: string;
 	kind?: "text" | "code" | "output" | "error";
 }
 
@@ -147,6 +149,14 @@ export interface MessageRlmTraceStatusUpdate {
 	type: MessageUpdateType.RlmTrace;
 	subtype: MessageRlmTraceUpdateType.Status;
 	status: string;
+}
+
+export interface MessageRlmTraceStreamUpdate {
+	type: MessageUpdateType.RlmTrace;
+	subtype: MessageRlmTraceUpdateType.Stream;
+	phase: "root" | "worker";
+	iteration: number;
+	delta: string;
 }
 
 export interface MessageRlmTraceSectionUpdate {
@@ -160,4 +170,7 @@ export interface MessageRlmTraceSectionUpdate {
 	details: MessageRlmTraceDetail[];
 }
 
-export type MessageRlmTraceUpdate = MessageRlmTraceStatusUpdate | MessageRlmTraceSectionUpdate;
+export type MessageRlmTraceUpdate =
+	| MessageRlmTraceStatusUpdate
+	| MessageRlmTraceStreamUpdate
+	| MessageRlmTraceSectionUpdate;
