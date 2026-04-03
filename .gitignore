@@ -28,7 +28,7 @@ chat-ui/db/
 .idea/
 .vscode/
 
-2512.24601v2.pdf
+*.pdf
 
 chat-ui/.env.local
 chat-ui/.env.*.local
